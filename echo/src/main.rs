@@ -15,7 +15,7 @@ fn handler_echo(node: &mut Node, msg: Message) -> Result<Message> {
             Ok(node.reply(msg.src.clone(), body))
         }
         _ => Err(Box::new(Error::ExpectedMessage {
-            found: msg.body.key().unwrap_or(Type::Undefined),
+            found: msg.body.key().unwrap_or(Type::Invalid),
             expected: Type::Echo,
         })),
     }

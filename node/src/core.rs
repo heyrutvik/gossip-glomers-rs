@@ -1,19 +1,22 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::num::Wrapping;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::helper::{Error, Result};
 use serde::{Deserialize, Serialize};
 
-type NodeId = String;
-type MessageId = u32;
-type CodeId = u32;
+pub type NodeId = String;
+pub type MessageId = u32;
+pub type CodeId = u32;
 pub type Handler = fn(&mut Node, Message) -> Result<Message>;
 
 pub struct Node {
-    counter: AtomicU32,
     node_id: Option<NodeId>,
     node_ids: Option<Vec<NodeId>>,
     handlers: HashMap<Type, Handler>,
+
+    msg_counter: u32,
+    uid_counter: Wrapping<u8>,
 }
 
 impl Node {
@@ -22,15 +25,17 @@ impl Node {
             .entry(Type::Init)
             .or_insert(Self::handler_init as Handler);
         Self {
-            counter: AtomicU32::new(1),
+            handlers,
             node_id: None,
             node_ids: None,
-            handlers,
+            msg_counter: 0,
+            uid_counter: Wrapping::default(),
         }
     }
 
     pub fn gen_msg_id(&mut self) -> MessageId {
-        self.counter.fetch_add(1, Ordering::SeqCst)
+        self.msg_counter += 1;
+        self.msg_counter
     }
 
     pub fn reply(&self, dest: NodeId, body: Workload) -> Message {
@@ -56,6 +61,36 @@ impl Node {
         })
     }
 
+    // will return empty node_id if node is not initialized.
+    pub fn node_id(&self) -> NodeId {
+        self.node_id.clone().unwrap_or(String::new())
+    }
+
+    pub fn gen_unique_id(&mut self) -> String {
+        let now = SystemTime::now();
+        let epoch = now
+            .duration_since(UNIX_EPOCH)
+            .expect("Unique id: should be able to get unix epoch.")
+            .as_millis() as u64;
+        let part1 = (epoch << 30) >> 7; // 48 bit epoch
+
+        let node_id_mask = 0x000000000000FF00;
+        let node_id: u64 = self
+            .node_id()
+            .chars()
+            .skip(1)
+            .collect::<String>()
+            .parse()
+            .unwrap();
+        let part2 = (node_id << 8) & node_id_mask; // 8 bit node id
+
+        self.uid_counter += 1;
+        let part3 = self.uid_counter.0 as u64; // 8 bit unique id counter (wrapped)
+
+        let unique_id = part1 | part2 | part3;
+        unique_id.to_string()
+    }
+
     fn is_initialized(&self) -> bool {
         self.node_id.is_some() && self.node_ids.is_some()
     }
@@ -66,11 +101,6 @@ impl Node {
         self.node_id = Some(node_id);
         self.node_ids = Some(node_ids);
         self.handlers.remove(&Type::Init);
-    }
-
-    // will return empty node_id if node is not initialized.
-    fn node_id(&self) -> NodeId {
-        self.node_id.clone().unwrap_or(String::new())
     }
 
     fn handler_init(node: &mut Node, message: Message) -> Result<Message> {
@@ -84,7 +114,7 @@ impl Node {
                 Ok(node.reply(message.src, Workload::init_ok(msg_id)))
             }
             _ => Err(Box::new(Error::ExpectedMessage {
-                found: message.body.key().unwrap_or(Type::Undefined),
+                found: message.body.key().unwrap_or(Type::Invalid),
                 expected: Type::Init,
             })),
         }
@@ -130,6 +160,14 @@ pub enum Workload {
         msg_id: MessageId,
         echo: String,
     },
+    Generate {
+        msg_id: MessageId,
+    },
+    GenerateOk {
+        in_reply_to: MessageId,
+        msg_id: MessageId,
+        id: String,
+    },
 }
 
 impl Workload {
@@ -137,6 +175,7 @@ impl Workload {
         match self {
             Workload::Init { .. } => Ok(Type::Init),
             Workload::Echo { .. } => Ok(Type::Echo),
+            Workload::Generate { .. } => Ok(Type::Generate),
             _ => Err(Box::new(Error::KeyNotFound)),
         }
     }
@@ -150,7 +189,9 @@ impl Workload {
 pub enum Type {
     Init,
     Echo,
-    Undefined,
+    Generate,
+
+    Invalid, // received key is either not listed or missing in the message.
 }
 
 #[cfg(test)]
