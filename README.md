@@ -3,7 +3,7 @@
 A series of distributed systems challenges brought to you by [Fly.io](https://fly.io/dist-sys/).
 
 0. [Maelstrom node implementation](node/README.md)
-1. [Echo challenge](echo/README.md)
+1. [Echo](echo/README.md)
 2. [Unique ID Generation](uniqueids/README.md)
 
 ### How to run?
