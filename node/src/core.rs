@@ -19,6 +19,7 @@ pub struct Node {
     msg_counter: u32,
     uid_counter: Wrapping<u8>,
     broadcast_messages: Vec<BroadcastMessage>,
+    neighbors: Vec<NodeId>,
 }
 
 impl Node {
@@ -33,6 +34,7 @@ impl Node {
             msg_counter: 0,
             uid_counter: Wrapping::default(),
             broadcast_messages: Vec::new(),
+            neighbors: Vec::new(),
         }
     }
 
@@ -102,6 +104,14 @@ impl Node {
 
     pub fn broadcast_messages(&self) -> Vec<BroadcastMessage> {
         self.broadcast_messages.clone()
+    }
+
+    pub fn neighbors(&self) -> &Vec<NodeId> {
+        &self.neighbors
+    }
+
+    pub fn set_neighbors(&mut self, neighbors: Vec<NodeId>) {
+        self.neighbors = neighbors;
     }
 
     fn is_initialized(&self) -> bool {

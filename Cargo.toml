@@ -4,6 +4,6 @@ members = [
     "node",
     "echo",
     "uniqueids",
-    "broadcast3a",
+    "broadcast",
 ]
 

@@ -5,7 +5,7 @@ A series of distributed systems challenges brought to you by [Fly.io](https://fl
 0. [Maelstrom node implementation](node/README.md)
 1. [Echo](echo/README.md)
 2. [Unique ID Generation](uniqueids/README.md)
-3. [Single-Node Broadcast](broadcast3a/README.md)
+3. [Broadcast](broadcast/README.md)
 
 ### How to run?
 1. [Install](https://github.com/jepsen-io/maelstrom/blob/main/doc/01-getting-ready/index.md#installation) Maelstrom

@@ -1,15 +1,35 @@
 use std::collections::HashMap;
 
-use node::core::{Handler, Message, Node, Type, Workload};
+use node::core::{BroadcastMessage, Handler, Message, Node, NodeId, Type, Workload};
 use node::helper::{Error, Result};
 use node::Runner;
+
+fn broadcast_message(node: &mut Node, src: NodeId, message: BroadcastMessage) -> Vec<Message> {
+    let mut replies = Vec::new();
+    if !node.broadcast_messages().contains(&message) {
+        node.push_broadcast_message(message);
+        let neighbors = node.neighbors().clone(); // FIXME
+        for neighbor in neighbors {
+            if *neighbor != src {
+                let body = Workload::Broadcast {
+                    msg_id: node.gen_msg_id(),
+                    message,
+                };
+                let reply = node.reply(neighbor.clone(), body);
+                replies.push(reply);
+            }
+        }
+    }
+    replies
+}
 
 fn handler_broadcast(node: &mut Node, msg: Message) -> Result<Vec<Message>> {
     match msg.body {
         Workload::Broadcast { msg_id, message } => {
-            node.push_broadcast_message(message);
+            let mut replies = broadcast_message(node, msg.src.clone(), message);
             let body = Workload::broadcast_ok(msg_id, node.gen_msg_id());
-            Ok(vec![node.reply(msg.src.clone(), body)])
+            replies.push(node.reply(msg.src.clone(), body));
+            Ok(replies)
         }
         _ => Err(Box::new(Error::ExpectedMessage {
             found: msg.body.key().unwrap_or(Type::Invalid),
@@ -33,7 +53,13 @@ fn handler_read(node: &mut Node, msg: Message) -> Result<Vec<Message>> {
 
 fn handler_topology(node: &mut Node, msg: Message) -> Result<Vec<Message>> {
     match msg.body {
-        Workload::Topology { msg_id, .. } => {
+        Workload::Topology {
+            msg_id,
+            mut topology,
+        } => {
+            let node_id = node.node_id();
+            let neighbors = topology.remove(&node_id).unwrap_or(Vec::new());
+            node.set_neighbors(neighbors);
             let body = Workload::topology_ok(msg_id, node.gen_msg_id());
             Ok(vec![node.reply(msg.src.clone(), body)])
         }
@@ -63,7 +89,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_broadcast3a() {
+    fn test_broadcast() {
         let mut node = create_node();
         let init_json = r#"{"src":"c1","dest":"n1","body":{"type":"init","msg_id":1,"node_id":"n1","node_ids":["n1","n2","n3"]}}"#;
         let init_message = serde_json::from_str::<Message>(init_json).unwrap();
