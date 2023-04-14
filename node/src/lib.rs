@@ -25,7 +25,7 @@ impl Runner {
             let reply = serde_json::from_str::<Message>(buffer.trim_end())
                 .map_err(|error| error.into())
                 .and_then(|message| self.node.process(message))
-                .map(|reply| self.write(&reply));
+                .map(|replies| replies.iter().for_each(|reply| self.write(reply)));
 
             if reply.is_err() {
                 let e = reply.unwrap_err();

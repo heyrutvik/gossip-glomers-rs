@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 pub type NodeId = String;
 pub type MessageId = u32;
 pub type CodeId = u32;
-pub type Handler = fn(&mut Node, Message) -> Result<Message>;
+pub type Handler = fn(&mut Node, Message) -> Result<Vec<Message>>;
+pub type BroadcastMessage = u64;
 
 pub struct Node {
     node_id: Option<NodeId>,
@@ -17,6 +18,7 @@ pub struct Node {
 
     msg_counter: u32,
     uid_counter: Wrapping<u8>,
+    broadcast_messages: Vec<BroadcastMessage>,
 }
 
 impl Node {
@@ -30,6 +32,7 @@ impl Node {
             node_ids: None,
             msg_counter: 0,
             uid_counter: Wrapping::default(),
+            broadcast_messages: Vec::new(),
         }
     }
 
@@ -46,7 +49,7 @@ impl Node {
         }
     }
 
-    pub fn process(&mut self, message: Message) -> Result<Message> {
+    pub fn process(&mut self, message: Message) -> Result<Vec<Message>> {
         message.body.key().and_then(|key| {
             if !self.is_initialized() && key != Type::Init {
                 return Err(Box::new(Error::NotInitializedYet));
@@ -55,7 +58,9 @@ impl Node {
             // workaround to let the handler take "self".
             match self.handlers.get(&key) {
                 Some(handler) => handler(self, message),
-                None if self.is_initialized() => Err(Box::new(Error::AlreadyInitialized)),
+                None if self.is_initialized() && key == Type::Init => {
+                    Err(Box::new(Error::AlreadyInitialized))
+                }
                 None => Err(Box::new(Error::HandlerNotFound { key })),
             }
         })
@@ -91,6 +96,14 @@ impl Node {
         unique_id.to_string()
     }
 
+    pub fn push_broadcast_message(&mut self, message: BroadcastMessage) {
+        self.broadcast_messages.push(message);
+    }
+
+    pub fn broadcast_messages(&self) -> Vec<BroadcastMessage> {
+        self.broadcast_messages.clone()
+    }
+
     fn is_initialized(&self) -> bool {
         self.node_id.is_some() && self.node_ids.is_some()
     }
@@ -103,7 +116,7 @@ impl Node {
         self.handlers.remove(&Type::Init);
     }
 
-    fn handler_init(node: &mut Node, message: Message) -> Result<Message> {
+    fn handler_init(node: &mut Node, message: Message) -> Result<Vec<Message>> {
         match message.body {
             Workload::Init {
                 msg_id,
@@ -111,7 +124,8 @@ impl Node {
                 node_ids,
             } => {
                 node.init(node_id, node_ids);
-                Ok(node.reply(message.src, Workload::init_ok(msg_id)))
+                let reply = node.reply(message.src, Workload::init_ok(msg_id));
+                Ok(vec![reply])
             }
             _ => Err(Box::new(Error::ExpectedMessage {
                 found: message.body.key().unwrap_or(Type::Invalid),
@@ -168,6 +182,30 @@ pub enum Workload {
         msg_id: MessageId,
         id: String,
     },
+    Broadcast {
+        msg_id: MessageId,
+        message: BroadcastMessage,
+    },
+    BroadcastOk {
+        in_reply_to: MessageId,
+        msg_id: MessageId,
+    },
+    Read {
+        msg_id: MessageId,
+    },
+    ReadOk {
+        in_reply_to: MessageId,
+        msg_id: MessageId,
+        messages: Vec<BroadcastMessage>,
+    },
+    Topology {
+        msg_id: MessageId,
+        topology: HashMap<NodeId, Vec<NodeId>>,
+    },
+    TopologyOk {
+        in_reply_to: MessageId,
+        msg_id: MessageId,
+    },
 }
 
 impl Workload {
@@ -176,7 +214,52 @@ impl Workload {
             Workload::Init { .. } => Ok(Type::Init),
             Workload::Echo { .. } => Ok(Type::Echo),
             Workload::Generate { .. } => Ok(Type::Generate),
+            Workload::Broadcast { .. } => Ok(Type::Broadcast),
+            Workload::Read { .. } => Ok(Type::Read),
+            Workload::Topology { .. } => Ok(Type::Topology),
             _ => Err(Box::new(Error::KeyNotFound)),
+        }
+    }
+
+    pub fn echo_ok(in_reply_to: MessageId, msg_id: MessageId, echo: String) -> Workload {
+        Workload::EchoOk {
+            in_reply_to,
+            msg_id,
+            echo,
+        }
+    }
+
+    pub fn generate_ok(in_reply_to: MessageId, msg_id: MessageId, id: String) -> Workload {
+        Workload::GenerateOk {
+            in_reply_to,
+            msg_id,
+            id,
+        }
+    }
+
+    pub fn broadcast_ok(in_reply_to: MessageId, msg_id: MessageId) -> Workload {
+        Workload::BroadcastOk {
+            in_reply_to,
+            msg_id,
+        }
+    }
+
+    pub fn read_ok(
+        in_reply_to: MessageId,
+        msg_id: MessageId,
+        messages: Vec<BroadcastMessage>,
+    ) -> Workload {
+        Workload::ReadOk {
+            in_reply_to,
+            msg_id,
+            messages,
+        }
+    }
+
+    pub fn topology_ok(in_reply_to: MessageId, msg_id: MessageId) -> Workload {
+        Workload::TopologyOk {
+            in_reply_to,
+            msg_id,
         }
     }
 
@@ -190,6 +273,9 @@ pub enum Type {
     Init,
     Echo,
     Generate,
+    Broadcast,
+    Read,
+    Topology,
 
     Invalid, // received key is either not listed or missing in the message.
 }
@@ -208,7 +294,7 @@ mod tests {
         let reply = node.process(message);
         assert!(reply.is_ok());
 
-        let reply = serde_json::to_string(&reply.unwrap()).unwrap();
+        let reply = serde_json::to_string(&reply.unwrap().first().unwrap()).unwrap();
         assert_eq!(
             reply,
             r#"{"src":"n1","dest":"c1","body":{"type":"init_ok","in_reply_to":1}}"#
@@ -243,4 +329,6 @@ mod tests {
             Box::new(Error::AlreadyInitialized).to_string()
         );
     }
+
+    // TODO test unique id generator
 }

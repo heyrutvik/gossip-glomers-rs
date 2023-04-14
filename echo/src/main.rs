@@ -4,15 +4,11 @@ use node::core::{Handler, Message, Node, Type, Workload};
 use node::helper::{Error, Result};
 use node::Runner;
 
-fn handler_echo(node: &mut Node, msg: Message) -> Result<Message> {
+fn handler_echo(node: &mut Node, msg: Message) -> Result<Vec<Message>> {
     match msg.body {
         Workload::Echo { msg_id, echo } => {
-            let body = Workload::EchoOk {
-                in_reply_to: msg_id,
-                echo,
-                msg_id: node.gen_msg_id(),
-            };
-            Ok(node.reply(msg.src.clone(), body))
+            let body = Workload::echo_ok(msg_id, node.gen_msg_id(), echo);
+            Ok(vec![node.reply(msg.src.clone(), body)])
         }
         _ => Err(Box::new(Error::ExpectedMessage {
             found: msg.body.key().unwrap_or(Type::Invalid),
@@ -50,7 +46,7 @@ mod tests {
         let reply = node.process(echo_message);
         assert!(reply.is_ok());
 
-        let reply = serde_json::to_string(&reply.unwrap()).unwrap();
+        let reply = serde_json::to_string(&reply.unwrap().first().unwrap()).unwrap();
         assert_eq!(
             reply,
             r#"{"src":"n1","dest":"c1","body":{"type":"echo_ok","in_reply_to":1,"msg_id":1,"echo":"Hello, World!"}}"#
